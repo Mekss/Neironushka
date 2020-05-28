@@ -1,0 +1,74 @@
+install.packages('tensorflow')
+install.packages('keras')
+library('keras')
+library('tensorflow')
+
+use_condaenv("r-tensorflow")
+
+install_keras()
+
+откатываем до старой версии
+install_tensorflow(version = '1.12')
+
+# Загружаем данные
+mnist <- dataset_mnist()
+# Разбиваем полученные данные на 4 переменные для удобства
+train_images <- mnist$train$x
+train_labels <- mnist$train$y
+test_images <- mnist$test$x
+test_labels <- mnist$test$y
+
+
+# строим архитектуру нейронной сети
+network <- keras_model_sequential() %>%
+layer_dense(units = 512, activation = 'relu', input_shape = c(28*28)) %>%
+layer_dense(units = 10, activation = 'softmax')
+
+# Устанавливаем оптимизатор, потери, метрики
+network %>% compile(
+    optimizer = 'rmsprop',
+    loss = 'categorical_crossentropy',
+    metrics = c('accuracy')
+)
+
+# Изменяем размерность
+
+train_images <- array_reshape(train_images, c(60000, 28*28)) # меняем размерность к матрице
+train_images <- train_images/255 # меняем область значений
+str(train_images)
+test_images <- array_reshape(test_images, c(10000, 28*28))
+test_images <- test_images/255
+
+# Устанавливаем категории для ярлыков
+
+train_labels <- to_categorical(train_labels)
+test_labels <- to_categorical(test_labels)
+
+# Тренировка нейронки на 15 эпохах
+
+network %>% fit(train_images, train_labels, epochs = 15, batch_size = 128)
+
+# точность модели составила 97,1%
+
+metric <- network %>% evaluate(test_images, test_labels)
+metric
+
+# точность модели по тестовой выборке 95,9 (потому что переобучение или overfitting)
+
+# Предсказываем первые и последние 15 значений из тестовой выборки
+prediction1 <- network %>% predict_classes(test_images[1:15,])
+prediction2 <- network %>% predict_classes(test_images[9986:10000,])
+
+# Выводим реальные числа, отраженные в первых и последних 15 матрицах
+test_labels1 <-mnist$test$y[1:15]
+test_labels2 <-mnist$test$y[9986:10000]
+
+# Строим таблицу с полученными данными
+tabl <- t(rbind(prediction1, test_labels1, prediction2, test_labels2))
+
+# получаем: предсказанные значения совпали с реальными
+
+# Отображаем полученные рукописные числа из последних 15 матриц
+for (i in 9986:10000) {
+image(as.matrix(mnist$test$x[i, 1:28, 1:28]))
+}
