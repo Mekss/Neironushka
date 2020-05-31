@@ -1,0 +1,230 @@
+#Подготовка пакетов
+
+install.packages('BatchGetSymbols')
+install.packages('plotly')
+install.packages('minimax')
+
+library('minimax')
+library('plotly')
+library('BatchGetSymbols')
+library('keras')
+library('tensorflow')
+
+#Подготовка данных (CAC 40)
+tickers <- c('^FCHI')
+first.date <- Sys.Date() - 360*5
+last.date <- Sys.Date()
+
+yts <- BatchGetSymbols(tickers = tickers,
+                       first.date = first.date,
+                       last.date = last.date,
+                       cache.folder = file.path(tempdir(),
+                                                'BGS_Cache') )
+
+y <-  yts$df.tickers$price.close
+myts <-  data.frame(index = yts$df.tickers$ref.date, price = y, vol = yts$df.tickers$volume)
+myts <-  myts[complete.cases(myts), ]
+myts <-  myts[-seq(nrow(myts) - 1200), ]
+myts$index <-  seq(nrow(myts))
+
+#Стандартизуем данные
+myts <- data.frame(index = rminimax(myts$index), price = rminimax(myts$price), vol= rminimax(myts$vol))
+
+#Делим выборку на тестовую и тренировочную
+datalags = 20
+train <-  myts[seq(1000 + datalags), ]
+test <-  myts[1000 + datalags + seq(200 + datalags), ]
+batch.size <-  50
+
+#Создаем массивы данных
+
+x.train <-  array(data = lag(cbind(train$price, train$vol), datalags)[-(1:datalags), ], dim = c(nrow(train) - datalags, datalags))
+y.train = array(data = train$price[-(1:datalags)], dim = c(nrow(train)-datalags))
+
+x.test <-  array(data = lag(cbind(test$vol, test$price), datalags)[-(1:datalags), ], dim = c(nrow(test) - datalags, datalags))
+y.test <-  array(data = test$price[-(1:datalags)], dim = c(nrow(test) - datalags))
+
+### Обучаем SM
+
+SM <- keras_model_sequential() %>%
+  layer_dense(units = 1000, activation = 'relu') %>%
+  layer_dense(units = 5, activation = 'sigmoid')
+
+#SM - rmspop, mse
+
+SM %>% compile(
+  optimizer = 'rmsprop',
+  loss = 'mse')
+
+SM %>% fit(x.train, y.train, epochs = 10, batch_size = 50)
+SM11 <- 0.0854
+
+# SM - rmspop, mape
+
+SM %>% compile(
+  optimizer = 'rmsprop',
+  loss = 'mape')
+
+SM %>% fit(x.train, y.train, epochs = 20, batch_size = 50)
+SM21 <- 104.2599
+
+# SM - adam, mse
+
+SM %>% compile(
+  optimizer = 'adam',
+  loss = 'mse')
+
+SM %>% fit(x.train, y.train, epochs = 10, batch_size = 50)
+SM12 <- 0.0861
+
+# SM - adam, mape
+
+SM %>% compile(
+  optimizer = 'adam',
+  loss = 'mape')
+
+SM %>% fit(x.train, y.train, epochs = 20, batch_size = 50)
+SM22 <- 232.3343
+
+
+### Обучаем RNN 
+
+model <- keras_model_sequential() %>%
+  layer_embedding(input_dim = 10000, output_dim = 50) %>%
+  layer_simple_rnn(units = 50) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+# RNN - rmsprop, mse
+
+model %>% compile(
+  optimizer = "rmsprop",
+  loss = "mse",)
+
+history <- model %>% fit(
+  x.train, y.train,
+  epochs = 10,
+  batch_size = 50,
+  validation_split = 0.2)
+RNN11 <- 0.0947
+
+# RNN - rmsprop, mape
+
+model %>% compile(
+  optimizer = "rmsprop",
+  loss = "mape",)
+
+history <- model %>% fit(
+  x.train, y.train,
+  epochs = 10,
+  batch_size = 50,
+  validation_split = 0.2)
+RNN21 <- 93.9801
+
+# RNN - adam, mse
+
+model %>% compile(
+  optimizer = "adam",
+  loss = "mse",)
+
+history <- model %>% fit(
+  x.train, y.train,
+  epochs = 10,
+  batch_size = 50,
+  validation_split = 0.2)
+RNN12 <- 0.0830
+
+# RNN - adam, mape
+
+model %>% compile(
+  optimizer = "adam",
+  loss = "mape",)
+
+history <- model %>% fit(
+  x.train, y.train,
+  epochs = 10,
+  batch_size = 50,
+  validation_split = 0.2)
+RNN22 <- 92.6049
+
+
+### Готовим датасет для LSTM ###
+
+# Стандартизуем выборку
+msd.price <-  c(mean(myts$price), sd(myts$price))
+msd.vol <-  c(mean(myts$vol), sd(myts$vol))
+myts$price <-  (myts$price - msd.price[1])/msd.price[2]
+myts$vol <-  (myts$vol - msd.vol[1])/msd.vol[2]
+
+# Делим датасет на тренировочную и тестовую выборки
+datalags = 20
+train <-  myts[seq(1000 + datalags), ]
+test <-  myts[1000 + datalags + seq(200 + datalags), ]
+batch.size <- 50
+
+# Создаем массивы
+x.train <-  array(data = lag(cbind(train$price, train$vol), datalags)[-(1:datalags), ], dim = c(nrow(train) - datalags, datalags, 2))
+y.train = array(data = train$price[-(1:datalags)], dim = c(nrow(train)-datalags, 1))
+
+x.test <-  array(data = lag(cbind(test$vol, test$price), datalags)[-(1:datalags), ], dim = c(nrow(test) - datalags, datalags, 2))
+y.test <-  array(data = test$price[-(1:datalags)], dim = c(nrow(test) - datalags, 1))
+
+### Обучение LSTM
+
+model <- keras_model_sequential()  %>%
+  layer_lstm(units = 100,
+             input_shape = c(datalags, 2),
+             batch_size = batch.size,
+             return_sequences = TRUE,
+             stateful = TRUE) %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_lstm(units = 50,
+             return_sequences = FALSE,
+             stateful = TRUE) %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 1)
+
+# LSTM - rmsprop, mse
+
+model %>%
+  compile(loss = 'mse', optimizer = 'rmsprop')
+
+model %>% fit(x.train, y.train, epochs = 10, batch_size = batch.size)
+LSTM11 <- 1.0067
+
+# LSTM - rmsprop, mape
+
+model %>%
+  compile(loss = 'mape', optimizer = 'rmsprop')
+
+model %>% fit(x.train, y.train, epochs = 8, batch_size = batch.size)
+LSTM21 <- 103.4530
+
+# LSTM - adam, mse
+
+model %>%
+  compile(loss = 'mse', optimizer = 'adam')
+
+model %>% fit(x.train, y.train, epochs = 10, batch_size = batch.size)
+LSTM12 <- 1.0022
+
+# LSTM - adam, mape
+
+model %>%
+  compile(loss = 'mape', optimizer = 'adam')
+
+model %>% fit(x.train, y.train, epochs = 10, batch_size = batch.size)
+LSTM22 <- 100.8322
+
+
+### Итоги (таблица)
+MSE <- c(SM11,SM12,RNN11,RNN12,LSTM11,LSTM12)
+MAPE <- c(SM21,SM22,RNN21,RNN22,LSTM21,LSTM22)
+
+TABLE <- data.frame('NN' = c(rep('SM', 2), rep('RNN', 2), rep('LSTM', 2)), 
+                    'optimizer' = rep(c('rmsprop', 'adam'), 3),
+                    'MSE' = MSE,
+                    'MAPE' = MAPE)
+TABLE
+
+# Лучшая нейронная сеть - RNN (adam, mse)
+# loss=0.0830
